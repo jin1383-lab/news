@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import json
 
 # =================================================================
 # 1. 페이지 기본 설정 및 제목
@@ -13,27 +14,27 @@ st.title("📰 Oddee 뉴스봇 관리 대시보드")
 st.write("최신 기사를 확인하고 내 메일로 바로 발송할 수 있는 뉴스 가공 봇입니다.")
 
 # =================================================================
-# 2. [수정] RSS 피드를 활용한 우회 크롤링 함수 (1시간 캐시)
+# 2. [우회 완료] 프록시 API를 활용한 RSS 피드 크롤링 함수 (1시간 캐시)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_oddee_news():
-    # 일반 웹페이지가 아닌 방화벽 차단이 없는 RSS Feed 주소를 공략합니다.
-    url = "https://www.oddee.com/feed/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml, text/xml;q=0.9"
-    }
+    # Streamlit IP 차단을 뚫기 위해 무료 우회 프록시 API 서버를 경유합니다.
+    target_url = "https://www.oddee.com/feed/"
+    proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(target_url)}"
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(proxy_url, timeout=15)
         
-        # 만약 피드조차 403으로 막힌다면 경고 출력
-        if response.status_code == 403:
-            st.error("⚠️ 사이트 방화벽이 RSS 피드 요청마저 차단했습니다. 이 경우 프록시 API 우회가 필요합니다.")
+        if response.status_code != 200:
+            st.error(f"⚠️ 우회 서버 응답 실패 (상태 코드: {response.status_code})")
             return []
             
-        # XML 데이터를 해석하기 위해 BeautifulSoup의 'xml' 파서 사용
-        soup = BeautifulSoup(response.text, 'xml')
+        # AllOrigins API는 데이터를 JSON 형태 내부의 'contents'에 담아줍니다.
+        json_data = response.json()
+        xml_content = json_data.get("contents", "")
+        
+        # XML 데이터를 해석하기 위해 BeautifulSoup과 lxml 파서 사용
+        soup = BeautifulSoup(xml_content, 'xml')
         articles = []
         
         # RSS 피드 내부에서 각 기사를 뜻하는 <item> 태그 추출
@@ -51,13 +52,14 @@ def fetch_oddee_news():
                 if link not in [a['link'] for a in articles]:
                     articles.append({"title": title, "link": link})
             
-            if len(articles) >= 5:  # 최신 기사 5개만 수집 시 종료
+            if len(articles) >= 5:  # 최신 기사 5개만 수집
                 break
                 
         return articles
 
     except Exception as e:
-        st.error(f"피드 수집 중 에러 발생: {e}")
+        st.error(f"🚨 피드 우회 수집 중 에러 발생: {e}")
+        st.info("💡 팁: requirements.txt 파일에 'lxml'이 정상적으로 추가되었는지 확인해 주세요.")
         return []
 
 # =================================================================
@@ -115,21 +117,25 @@ if articles_list:
             if success:
                 st.success(f"🎉 {target_email} 계정으로 성공적으로 발송되었습니다!")
 else:
-    st.warning("수집된 기사가 없습니다. 사이트 구조를 확인하거나 아래 디버깅 모드를 켜보세요.")
+    st.warning("수집된 기사가 없습니다. 라이브러리 빌드 중이거나 우회 서버 연결을 확인 중입니다.")
 
 st.divider()
 
 # =================================================================
-# 5. 개발자용 디버깅 툴 (RSS 주소의 응답 상태 확인용)
+# 5. 개발자용 디버깅 툴 (우회 서버 작동 확인용)
 # =================================================================
 if st.checkbox("⚙️ 개발자용 디버깅 모드 켜기"):
-    st.subheader("🛠️ RSS 피드 응답 상태 점검")
+    st.subheader("🛠️ 프록시 우회 상태 점검")
     try:
-        test_res = requests.get("https://www.oddee.com/feed/", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-        st.write(f"RSS 피드 접속 상태 코드: `{test_res.status_code}` (200이면 정상 우회 완료)")
+        t_url = "https://www.oddee.com/feed/"
+        p_url = f"https://api.allorigins.win/get?url={requests.utils.quote(t_url)}"
+        test_res = requests.get(p_url, timeout=10)
+        st.write(f"우회 서버 응답 코드: `{test_res.status_code}` (200이면 프록시 우회 성공!)")
         
-        test_soup = BeautifulSoup(test_res.text, 'xml')
-        st.write("피드에서 발견된 최신 기사 타이틀 목록 샘플:")
-        st.code([t.text.strip() for t in test_soup.find_all('title')[:6]])
+        js = test_res.json()
+        inner_content = js.get("contents", "")
+        test_soup = BeautifulSoup(inner_content, 'xml')
+        st.write("우회 통로를 통해 받아온 최신 타이틀 샘플:")
+        st.code([t.text.strip() for t in test_soup.find_all('title')[:4]])
     except Exception as e:
         st.error(f"디버깅 연결 실패: {e}")
