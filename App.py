@@ -13,49 +13,43 @@ st.title("📰 Oddee 뉴스봇 관리 대시보드")
 st.write("최신 기사를 확인하고 내 메일로 바로 발송할 수 있는 뉴스 가공 봇입니다.")
 
 # =================================================================
-# 2. 업그레이드된 만능 크롤링 함수 (1시간 캐시 적용)
+# 2. [수정] RSS 피드를 활용한 우회 크롤링 함수 (1시간 캐시)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_oddee_news():
-    url = "https://www.oddee.com/"
-    # 크롬 브라우저와 동일한 헤더 설정 (봇 차단 우회)
+    # 일반 웹페이지가 아닌 방화벽 차단이 없는 RSS Feed 주소를 공략합니다.
+    url = "https://www.oddee.com/feed/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5"
+        "Accept": "application/rss+xml, application/xml, text/xml;q=0.9"
     }
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = response.apparent_encoding 
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 만약 피드조차 403으로 막힌다면 경고 출력
+        if response.status_code == 403:
+            st.error("⚠️ 사이트 방화벽이 RSS 피드 요청마저 차단했습니다. 이 경우 프록시 API 우회가 필요합니다.")
+            return []
+            
+        # XML 데이터를 해석하기 위해 BeautifulSoup의 'xml' 파서 사용
+        soup = BeautifulSoup(response.text, 'xml')
         articles = []
         
-        # 페이지 내의 모든 링크(a 태그)를 전수조사하는 만능 전략
-        all_links = soup.find_all('a')
+        # RSS 피드 내부에서 각 기사를 뜻하는 <item> 태그 추출
+        items = soup.find_all('item')
         
-        for link_tag in all_links:
-            if not link_tag.has_attr('href'):
-                continue
+        for item in items:
+            title_tag = item.find('title')
+            link_tag = item.find('link')
+            
+            if title_tag and link_tag:
+                title = title_tag.text.strip()
+                link = link_tag.text.strip()
                 
-            href = link_tag['href']
-            title = link_tag.text.strip()
-            
-            # 불필요한 페이지 링크 제외 키워드
-            skip_keywords = ['category', 'tag', 'about', 'contact', 'privacy', 'wp-admin', 'facebook', 'twitter', 'pinterest']
-            
-            # 조건 검사: 본인 도메인이면서 제목 글자 수가 15자 이상인 '진짜 기사' 후보 필터링
-            if (href.startswith('https://www.oddee.com/') or href.startswith('/')) and len(title) > 15:
-                if not any(kw in href.lower() for kw in skip_keywords):
-                    
-                    # 상대 경로일 경우 절대 경로로 보정
-                    if href.startswith('/'):
-                        href = f"https://www.oddee.com{href}"
-                        
-                    # 중복 주소 제외하고 수집
-                    if href not in [a['link'] for a in articles]:
-                        articles.append({"title": title, "link": href})
+                # 중복 데이터 검사 후 추가
+                if link not in [a['link'] for a in articles]:
+                    articles.append({"title": title, "link": link})
             
             if len(articles) >= 5:  # 최신 기사 5개만 수집 시 종료
                 break
@@ -63,14 +57,13 @@ def fetch_oddee_news():
         return articles
 
     except Exception as e:
-        st.error(f"크롤링 중 에러 발생: {e}")
+        st.error(f"피드 수집 중 에러 발생: {e}")
         return []
 
 # =================================================================
 # 3. 이메일 발송 함수
 # =================================================================
 def send_newsletter(articles, receiver_email):
-    # Streamlit Cloud의 Secrets 설정 창이나 로컬의 secrets.toml에서 정보를 가져옵니다.
     try:
         sender_email = st.secrets["email"]["sender"]
         sender_password = st.secrets["email"]["password"]
@@ -127,16 +120,16 @@ else:
 st.divider()
 
 # =================================================================
-# 5. 개발자용 디버깅 툴 (연결 실패 원인 추적용)
+# 5. 개발자용 디버깅 툴 (RSS 주소의 응답 상태 확인용)
 # =================================================================
 if st.checkbox("⚙️ 개발자용 디버깅 모드 켜기"):
-    st.subheader("🛠️ 웹사이트 응답 상태 점검")
+    st.subheader("🛠️ RSS 피드 응답 상태 점검")
     try:
-        test_res = requests.get("https://www.oddee.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-        st.write(f"접속 상태 코드: `{test_res.status_code}` (200이면 정상)")
+        test_res = requests.get("https://www.oddee.com/feed/", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        st.write(f"RSS 피드 접속 상태 코드: `{test_res.status_code}` (200이면 정상 우회 완료)")
         
-        test_soup = BeautifulSoup(test_res.text, 'html.parser')
-        st.write("발견된 모든 링크(a 태그)의 텍스트 상위 10개 예시:")
-        st.code([a.text.strip() for a in test_soup.find_all('a') if a.text.strip()][:10])
+        test_soup = BeautifulSoup(test_res.text, 'xml')
+        st.write("피드에서 발견된 최신 기사 타이틀 목록 샘플:")
+        st.code([t.text.strip() for t in test_soup.find_all('title')[:6]])
     except Exception as e:
         st.error(f"디버깅 연결 실패: {e}")
