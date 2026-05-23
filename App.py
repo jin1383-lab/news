@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import feedparser
 from mtranslate import translate
+import json
 
 # =================================================================
 # 1. 페이지 기본 설정 및 제목
@@ -15,7 +16,7 @@ st.title("👽 글로벌 기묘한 뉴스 종합 대시보드")
 st.write("전 세계의 가십, 미스터리, 신기한 뉴스를 한곳에 모아 번역해 드립니다.")
 
 # =================================================================
-# 2. [완전 우회 주소 세팅] 사이트별 보안 통과 RSS 피드 주소 매핑
+# 2. 사이트별 RSS 피드 주소 매핑 딕셔너리
 # =================================================================
 SITE_CONFIG = {
     "Oddee (기묘한 이야기)": {
@@ -46,50 +47,38 @@ SITE_CONFIG = {
 }
 
 # =================================================================
-# 3. [보안 돌파] 고성능 브라우저 헤더를 탑재한 수집 함수 (1시간 캐시)
+# 3. [초강력 우회] 프록시 경유 및 인코딩 보정 수집 함수 (1시간 캐시)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_news_by_site(site_name, sort_type):
-    url = SITE_CONFIG[site_name].get(sort_type, "https://www.oddee.com/feed/")
+    target_url = SITE_CONFIG[site_name].get(sort_type, "https://www.oddee.com/feed/")
     
-    # Cloudflare 및 고급 보안 스크립트를 우회하기 위한 철저한 실제 브라우저 위장 정보
+    # 1단계 대책 헤더
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9,ko-KR;q=0.8,ko;q=0.7",
-        "Cache-Control": "max-age=0",
-        "Connection": "keep-alive"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     
     try:
-        # feedparser의 자체 통신은 봇 필터에 걸리기 쉬우므로, 
-        # 검증된 requests 라이브러리로 원본 데이터를 먼저 가로챕니다.
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        # 간혹 인코딩이 깨져 파싱 에러가 나는 현상을 방지
-        response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
-        
-        # 다운로드받은 원본 데이터를 feedparser 메모리에 강제로 전달하여 해석
-        feed = feedparser.parse(response.text)
+        # 철벽 보안 사이트(Mental Floss, News of the Weird)인 경우 프록시 서버를 경유하여 IP를 세탁합니다.
+        if "mentalfloss" in target_url or "uexpress" in target_url:
+            proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(target_url)}"
+            # 공용 프록시 서버가 밀릴 때를 대비해 타임아웃을 30초로 대폭 늘립니다.
+            response = requests.get(proxy_url, headers=headers, timeout=30)
             
+            if response.status_code == 200:
+                json_data = response.json()
+                xml_content = json_data.get("contents", "")
+                feed = feedparser.parse(xml_content.encode('utf-8'))
+            else:
+                return []
+        else:
+            # 상대적으로 보안이 덜한 사이트들은 다이렉트로 빠르게 가져옵니다.
+            response = requests.get(target_url, headers=headers, timeout=15)
+            feed = feedparser.parse(response.content)
+            
+        # 피드가 비어있다면 에러 메시지 없이 빈 배열 리턴하여 무한 대기 방지
         if not feed.entries or len(feed.entries) == 0:
-            # 2차 대안: 간혹 피드 구조가 완전 다른 경우 BeautifulSoup로 원본 피드 추출 시도
-            soup = BeautifulSoup(response.text, 'xml')
-            items = soup.find_all('item')
-            articles = []
-            for item in items[:5]:
-                t = item.find('title')
-                l = item.find('link')
-                if t and l:
-                    raw_title = t.text.strip()
-                    link = l.text.strip()
-                    try:
-                        translated_title = translate(raw_title, "ko", "en")
-                        full_title = f"{raw_title} ({translated_title})"
-                    except Exception:
-                        full_title = raw_title
-                    articles.append({"title": full_title, "link": link})
-            return articles
+            return []
             
         articles = []
         
@@ -97,7 +86,7 @@ def fetch_news_by_site(site_name, sort_type):
             raw_title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
             
-            # 주소 유실 대비 멀티 태그 보정
+            # 주소 구멍 보정
             if not link and entry.get("id"):
                 link = entry.get("id").strip()
             if not link and entry.get("guid"):
@@ -106,25 +95,23 @@ def fetch_news_by_site(site_name, sort_type):
             if not raw_title or not link:
                 continue
                 
-            # 실시간 구글 번역 연동
+            # 실시간 구글 한국어 번역
             try:
                 translated_title = translate(raw_title, "ko", "en")
                 full_title = f"{raw_title} ({translated_title})"
             except Exception:
                 full_title = raw_title
             
-            # 중복 기사 수집 방지
             if link not in [a['link'] for a in articles]:
                 articles.append({"title": full_title, "link": link})
             
-            if len(articles) >= 5:  # 카테고리당 5개 노출
+            if len(articles) >= 5:
                 break
                 
         return articles
 
     except Exception as e:
-        # 배포 에러 모니터링용 기록
-        st.sidebar.error(f"⚠️ {site_name} 통신 실패 세부원인: {e}")
+        st.sidebar.error(f"⚠️ {site_name} 통신 실패 세부 사유: {e}")
         return []
 
 # =================================================================
