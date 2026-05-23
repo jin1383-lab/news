@@ -15,7 +15,7 @@ st.title("👽 글로벌 기묘한 뉴스 종합 대시보드")
 st.write("전 세계의 가십, 미스터리, 신기한 뉴스를 한곳에 모아 번역해 드립니다.")
 
 # =================================================================
-# 2. 사이트별 RSS 피드 주소 매핑 딕셔너리
+# 2. [최신 반영] 사이트별 RSS 피드 주소 매핑 딕셔너리
 # =================================================================
 SITE_CONFIG = {
     "Oddee (기묘한 이야기)": {
@@ -39,31 +39,32 @@ SITE_CONFIG = {
         "popular": "https://rss.upi.com/news/odd_news.rss"
     },
     "News of the Weird (세상에 이런일이)": {
-        "most_viewed": "https://www.uexpress.com/oddities/news-of-the-weird/feed",
-        "trending": "https://www.uexpress.com/oddities/news-of-the-weird/feed",
-        "popular": "https://www.uexpress.com/oddities/news-of-the-weird/feed"
+        "most_viewed": "https://www.uexpress.com/feed/oddities/news-of-the-weird",
+        "trending": "https://www.uexpress.com/feed/oddities/news-of-the-weird",
+        "popular": "https://www.uexpress.com/feed/oddities/news-of-the-weird"
     }
 }
 
 # =================================================================
-# 3. [보안 우회 강화] 피드 수집 및 번역 함수 (1시간 캐시)
+# 3. [철벽 우회] requests 데이터 주입 방식 크롤링 함수 (1시간 캐시)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_news_by_site(site_name, sort_type):
     url = SITE_CONFIG[site_name].get(sort_type, "https://www.oddee.com/feed/")
     
-    # 봇 차단 방화벽을 뚫기 위한 강력한 실제 브라우저 위장 헤더 정의
-    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    # 윈도우 11 크롬 브라우저와 100% 똑같은 유저 에이전트 및 통신 승인용 헤더 세팅
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
     
     try:
-        # feedparser에 유저 에이전트를 강제로 주입하여 차단을 우회합니다.
-        feed = feedparser.parse(url, agent=USER_AGENT)
+        # Step 1: feedparser를 바로 쓰지 않고, 강력한 requests 라이브러리로 방화벽을 먼저 깨부숩니다.
+        response = requests.get(url, headers=headers, timeout=12)
         
-        # 만약 차단당했거나 주소가 실패해서 entries가 비어있을 경우, requests 방식을 동원해 강제로 긁어옵니다.
-        if not feed.entries or len(feed.entries) == 0:
-            headers = {"User-Agent": USER_AGENT}
-            response = requests.get(url, headers=headers, timeout=10)
-            feed = feedparser.parse(response.content)
+        # Step 2: 받아온 가공 전의 깨끗한 문자열 데이터를 feedparser에 강제로 밀어 넣어 해석시킵니다.
+        feed = feedparser.parse(response.content)
             
         if not feed.entries:
             return []
@@ -74,31 +75,34 @@ def fetch_news_by_site(site_name, sort_type):
             raw_title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
             
-            # 피드 제공 규격에 따라 link 대신 id 태그에 주소가 들어있는 경우 보정
+            # 주소 유실 대비 보정 (id 태그나 guid 태그 확인)
             if not link and entry.get("id"):
                 link = entry.get("id").strip()
+            if not link and entry.get("guid"):
+                link = entry.get("guid").strip()
                 
             if not raw_title or not link:
                 continue
                 
-            # 실시간 한글 번역 구동
+            # 실시간 구글 한글 번역
             try:
                 translated_title = translate(raw_title, "ko", "en")
                 full_title = f"{raw_title} ({translated_title})"
             except Exception:
                 full_title = raw_title
             
-            # 중복 링크 방지
+            # 중복 데이터 검사
             if link not in [a['link'] for a in articles]:
                 articles.append({"title": full_title, "link": link})
             
-            if len(articles) >= 5:  # 5개 제한
+            if len(articles) >= 5:  # 상위 5개 수집 완료 시 리턴
                 break
                 
         return articles
 
     except Exception as e:
-        st.error(f"🚨 [{site_name}] 피드 해석 중 오류 발생: {e}")
+        # 배포 로그 점검용 에러 기록
+        st.sidebar.error(f"⚠️ {site_name} 연결 세부 실패 사유: {e}")
         return []
 
 # =================================================================
@@ -173,7 +177,7 @@ with tab1:
         for idx, art in enumerate(most_viewed_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
 
 with tab2:
     st.subheader(f"📈 {selected_site} - 실시간 경향 뉴스")
@@ -181,7 +185,7 @@ with tab2:
         for idx, art in enumerate(trending_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
 
 with tab3:
     st.subheader(f"💬 {selected_site} - 반응이 뜨거운 뉴스")
@@ -189,7 +193,7 @@ with tab3:
         for idx, art in enumerate(popular_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
 
 st.divider()
 
