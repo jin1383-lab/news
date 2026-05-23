@@ -13,14 +13,16 @@ st.title("📰 Oddee 뉴스봇 관리 대시보드")
 st.write("최신 기사를 확인하고 내 메일로 바로 발송할 수 있는 뉴스 가공 봇입니다.")
 
 # =================================================================
-# 2. 크롤링 함수 (st.cache_data를 사용해 1시간 동안 결과 기억)
+# 2. 업그레이드된 만능 크롤링 함수 (1시간 캐시 적용)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_oddee_news():
     url = "https://www.oddee.com/"
-    # 실제 브라우저처럼 보이도록 User-Agent 설정
+    # 크롬 브라우저와 동일한 헤더 설정 (봇 차단 우회)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
     }
     
     try:
@@ -30,29 +32,32 @@ def fetch_oddee_news():
         soup = BeautifulSoup(response.text, 'html.parser')
         articles = []
         
-        # Oddee.com의 주요 기사 타이틀 셀렉터 패턴들 탐색
-        elements = soup.select('h2.title a') or soup.select('h3.title a') or soup.select('.post-title a') or soup.select('article h2 a')
+        # 페이지 내의 모든 링크(a 태그)를 전수조사하는 만능 전략
+        all_links = soup.find_all('a')
         
-        # 위 패턴으로 안 잡힐 경우, 모든 h2/h3 내부의 링크를 탐색
-        if not elements:
-            elements = [title.find('a') for title in soup.find_all(['h2', 'h3']) if title.find('a')]
-
-        for post in elements:
-            if not post or not post.has_attr('href'):
+        for link_tag in all_links:
+            if not link_tag.has_attr('href'):
                 continue
                 
-            title = post.text.strip()
-            link = post['href']
+            href = link_tag['href']
+            title = link_tag.text.strip()
             
-            # 상대 경로일 경우 절대 경로로 보정
-            if link.startswith('/'):
-                link = f"https://www.oddee.com{link}"
-                
-            # 빈 제목 제외 및 중복 링크 방지
-            if title and link not in [a['link'] for a in articles]:
-                articles.append({"title": title, "link": link})
-                
-            if len(articles) >= 5:  # 최신 기사 5개만 수집
+            # 불필요한 페이지 링크 제외 키워드
+            skip_keywords = ['category', 'tag', 'about', 'contact', 'privacy', 'wp-admin', 'facebook', 'twitter', 'pinterest']
+            
+            # 조건 검사: 본인 도메인이면서 제목 글자 수가 15자 이상인 '진짜 기사' 후보 필터링
+            if (href.startswith('https://www.oddee.com/') or href.startswith('/')) and len(title) > 15:
+                if not any(kw in href.lower() for kw in skip_keywords):
+                    
+                    # 상대 경로일 경우 절대 경로로 보정
+                    if href.startswith('/'):
+                        href = f"https://www.oddee.com{href}"
+                        
+                    # 중복 주소 제외하고 수집
+                    if href not in [a['link'] for a in articles]:
+                        articles.append({"title": title, "link": href})
+            
+            if len(articles) >= 5:  # 최신 기사 5개만 수집 시 종료
                 break
                 
         return articles
@@ -122,7 +127,7 @@ else:
 st.divider()
 
 # =================================================================
-# 5. 개발자용 디버깅 툴 (선택 사항)
+# 5. 개발자용 디버깅 툴 (연결 실패 원인 추적용)
 # =================================================================
 if st.checkbox("⚙️ 개발자용 디버깅 모드 켜기"):
     st.subheader("🛠️ 웹사이트 응답 상태 점검")
@@ -131,9 +136,7 @@ if st.checkbox("⚙️ 개발자용 디버깅 모드 켜기"):
         st.write(f"접속 상태 코드: `{test_res.status_code}` (200이면 정상)")
         
         test_soup = BeautifulSoup(test_res.text, 'html.parser')
-        st.write("발견된 h2 태그 상위 5개:")
-        st.code([h.text.strip() for h in test_soup.find_all('h2')[:5]])
-        st.write("발견된 h3 태그 상위 5개:")
-        st.code([h.text.strip() for h in test_soup.find_all('h3')[:5]])
+        st.write("발견된 모든 링크(a 태그)의 텍스트 상위 10개 예시:")
+        st.code([a.text.strip() for a in test_soup.find_all('a') if a.text.strip()][:10])
     except Exception as e:
         st.error(f"디버깅 연결 실패: {e}")
