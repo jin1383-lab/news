@@ -47,24 +47,19 @@ SITE_CONFIG = {
 }
 
 # =================================================================
-# 3. [초강력 우회] 프록시 경유 및 인코딩 보정 수집 함수 (1시간 캐시)
+# 3. 프록시 경유 및 인코딩 보정 수집 함수 (1시간 캐시)
 # =================================================================
 @st.cache_data(ttl=3600)  
 def fetch_news_by_site(site_name, sort_type):
     target_url = SITE_CONFIG[site_name].get(sort_type, "https://www.oddee.com/feed/")
-    
-    # 1단계 대책 헤더
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     
     try:
-        # 철벽 보안 사이트(Mental Floss, News of the Weird)인 경우 프록시 서버를 경유하여 IP를 세탁합니다.
         if "mentalfloss" in target_url or "uexpress" in target_url:
             proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(target_url)}"
-            # 공용 프록시 서버가 밀릴 때를 대비해 타임아웃을 30초로 대폭 늘립니다.
             response = requests.get(proxy_url, headers=headers, timeout=30)
-            
             if response.status_code == 200:
                 json_data = response.json()
                 xml_content = json_data.get("contents", "")
@@ -72,21 +67,17 @@ def fetch_news_by_site(site_name, sort_type):
             else:
                 return []
         else:
-            # 상대적으로 보안이 덜한 사이트들은 다이렉트로 빠르게 가져옵니다.
             response = requests.get(target_url, headers=headers, timeout=15)
             feed = feedparser.parse(response.content)
             
-        # 피드가 비어있다면 에러 메시지 없이 빈 배열 리턴하여 무한 대기 방지
         if not feed.entries or len(feed.entries) == 0:
             return []
             
         articles = []
-        
         for entry in feed.entries:
             raw_title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
             
-            # 주소 구멍 보정
             if not link and entry.get("id"):
                 link = entry.get("id").strip()
             if not link and entry.get("guid"):
@@ -95,7 +86,6 @@ def fetch_news_by_site(site_name, sort_type):
             if not raw_title or not link:
                 continue
                 
-            # 실시간 구글 한국어 번역
             try:
                 translated_title = translate(raw_title, "ko", "en")
                 full_title = f"{raw_title} ({translated_title})"
@@ -111,7 +101,6 @@ def fetch_news_by_site(site_name, sort_type):
         return articles
 
     except Exception as e:
-        st.sidebar.error(f"⚠️ {site_name} 통신 실패 세부 사유: {e}")
         return []
 
 # =================================================================
@@ -170,7 +159,6 @@ with st.spinner(f"{selected_site}에서 뉴스를 안전하게 가져와 번역 
     trending_news = fetch_news_by_site(selected_site, 'trending')
     popular_news = fetch_news_by_site(selected_site, 'popular')
 
-# 이메일 전송용 묶음 데이터
 combined_data = {
     "Most Viewed 코너": most_viewed_news,
     "Trending 코너": trending_news,
@@ -186,7 +174,7 @@ with tab1:
         for idx, art in enumerate(most_viewed_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다.")
 
 with tab2:
     st.subheader(f"📈 {selected_site} - 실시간 경향 뉴스")
@@ -194,7 +182,7 @@ with tab2:
         for idx, art in enumerate(trending_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다.")
 
 with tab3:
     st.subheader(f"💬 {selected_site} - 반응이 뜨거운 뉴스")
@@ -202,33 +190,34 @@ with tab3:
         for idx, art in enumerate(popular_news, 1):
             st.markdown(f"{idx}. [{art['title']}]({art['link']})")
     else:
-        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다. 잠시 후 새로고침(R)을 눌러주세요.")
+        st.warning("⚠️ 사이트 보안망 우회 실패 또는 주소 점검 중입니다.")
 
 st.divider()
 
 # =================================================================
-# 6. 이메일 뉴스레터 발송 섹션
+# 6. [업데이트] 이메일 주소 기억 및 뉴스레터 발송 섹션
 # =================================================================
-st.subheader("📧 이메일로 이 카테고리 묶어 받기")
+st.subheader("📧 이메일 뉴스레터 발송")
 st.write(f"현재 선택된 **[{selected_site}]**의 기사들이 하나의 메일로 묶여 발송됩니다.")
-target_email = st.text_input("뉴스레터를 받을 이메일 주소 입력:", value="your_mail@example.com")
+
+# session_state를 이용해 이메일 주소를 기억하는 로직 추가
+if "saved_email" not in st.session_state:
+    st.session_state["saved_email"] = "your_mail@example.com"
+
+# 사용자가 텍스트 창에 주소를 바꾸면 세션에 자동 저장됩니다.
+target_email = st.text_input(
+    "뉴스레터를 받을 이메일 주소 입력 (한 번 입력하면 기억합니다):", 
+    value=st.session_state["saved_email"]
+)
+st.session_state["saved_email"] = target_email
 
 if st.button("🚀 번역된 종합 뉴스레터 메일로 쏘기"):
     if not most_viewed_news and not trending_news and not popular_news:
         st.error("보내기 실패: 수집된 기사가 존재하지 않습니다.")
+    elif target_email == "your_mail@example.com" or not target_email:
+        st.error("보내기 실패: 올바른 이메일 주소를 입력해 주세요.")
     else:
         with st.spinner("메일을 구성하여 안전하게 발송 중입니다..."):
             success = send_combined_newsletter(selected_site, combined_data, target_email)
             if success:
                 st.success(f"🎉 {target_email} 계정으로 뉴스 배달이 완료되었습니다!")
-
-st.divider()
-
-# =================================================================
-# 7. 디버깅 정보
-# =================================================================
-if st.checkbox("⚙️ 전체 사이트 동기화 상태 보기"):
-    st.write(f"현재 선택된 사이트: `{selected_site}`")
-    st.write(f"Most Viewed 개수: `{len(most_viewed_news)}`개")
-    st.write(f"Trending 개수: `{len(trending_news)}`개")
-    st.write(f"Popular 개수: `{len(popular_news)}`개")
